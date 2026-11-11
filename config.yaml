@@ -1,0 +1,36 @@
+# Settings for the UFC model pipeline. Nothing here is tuned on the test period.
+paths:
+  enriched: Datasets/ufc_fights_enriched.csv
+  nlbair: Datasets/raw/nlbair/ufc_all_fights_wide.csv
+  data: data
+  reports: reports
+
+seed: 20261110
+
+splits:
+  train_start: "2010-01-01"   # earlier fights feed histories and Elo only
+  market_start: "2013-02-16"  # first date with labelled opening and closing odds
+  val_start: "2023-01-01"
+  test_start: "2025-01-01"
+  test_end: "2026-10-10"      # last date with odds
+
+elo:
+  start: 1500.0
+  k: 56.0          # tuned by walk-forward on 2019-2024 (scripts/05a_tune_history.py)
+  new_boost: 2.0     # K is multiplied by 1 + new_boost / (1 + prior fights)
+
+history:
+  recent_half_life_fights: 3.0   # weight of a fight halves every 3 later fights
+  layoff_cap_days: 730
+  k_seconds: 900.0     # shrinkage: 15 pseudo-minutes at the debutant average
+  k_sig_attempts: 50.0
+  k_td_attempts: 5.0
+  k_fights: 3.0
+  prior_window_years: 5.0   # the debutant average uses debuts from the last 5 years only
+  # reach (cm) estimated from height (cm) when a profile has height but no reach.
+  # Fitted once on the 288 fighters who debuted before 2010; a fixed constant, so it
+  # cannot change when later fights are added. tests/test_clean.py re-derives it.
+  reach_from_height: {intercept: 10.15, slope: 0.9708}
+
+bootstrap:
+  reps: 2000

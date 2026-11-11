@@ -1,0 +1,18 @@
+# Python and tooling
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.vscode/
+.claude/
+
+# Derived tables: keep only the two the app reads
+data/*
+!data/fights_clean.csv
+!data/fighter_prefight.csv
+
+# Source datasets: keep only the fighter profile file the app reads
+Datasets/*
+!Datasets/raw/
+Datasets/raw/*
+!Datasets/raw/greco1899/

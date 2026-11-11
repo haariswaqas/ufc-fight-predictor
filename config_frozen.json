@@ -1,0 +1,81 @@
+{
+ "frozen_on": "2026-11-11",
+ "primary_model": "B average: mean log-odds of B1 and B2",
+ "models": {
+  "A1": {
+   "kind": "logit",
+   "market": false,
+   "start": 2005,
+   "half_life": 8.0,
+   "lam": 0.01,
+   "feature_set": "all"
+  },
+  "A2": {
+   "kind": "gbm",
+   "market": false,
+   "start": 2010,
+   "half_life": 8.0,
+   "rounds": 400,
+   "params": {
+    "num_leaves": 8,
+    "max_depth": -1,
+    "learning_rate": 0.02,
+    "min_child_samples": 40,
+    "feature_fraction": 0.6,
+    "lambda_l2": 5.0,
+    "min_split_gain": 0.01
+   }
+  },
+  "B1": {
+   "kind": "logit",
+   "market": true,
+   "start": 2015,
+   "half_life": null,
+   "lam": 0.03,
+   "feature_set": "all"
+  },
+  "B2": {
+   "kind": "gbm",
+   "market": true,
+   "start": 2013,
+   "half_life": null,
+   "rounds": 800,
+   "params": {
+    "num_leaves": 6,
+    "max_depth": 4,
+    "learning_rate": 0.005,
+    "min_child_samples": 300,
+    "feature_fraction": 0.6,
+    "lambda_l2": 0.0,
+    "min_split_gain": 0.01
+   }
+  }
+ },
+ "gbm_seeds": [
+  0,
+  1,
+  2,
+  3,
+  4
+ ],
+ "calibration": "none (raw model output; rescaling did not help in 2020-24)",
+ "betting_rule": {
+  "price": "opening",
+  "stake": "one unit",
+  "edge_threshold": 0.05,
+  "edge_cap": 0.2
+ },
+ "fit_window": "all decided fights before 2025-01-01 (B1 from 2015, B2 from 2013-02-16)",
+ "test_window": [
+  "2025-01-01",
+  "2026-10-10"
+ ],
+ "scoring_set": "decided fights with usable opening and closing odds (market_ok)",
+ "pass_rule": {
+  "1": "log loss lower than the opening odds, 95% event-bootstrap interval of the difference below zero",
+  "2": "log loss lower than the stretched opening odds (slope fitted before 2025), interval below zero",
+  "3": "mean closing-line value of the bets above zero, interval above zero",
+  "note": "betting return is reported but is not part of the pass rule (too noisy on one test window)"
+ },
+ "features_sha256": "b366e2c3d1c57e42262d0d549da21203bbf4551aba1c5a6e0f65697bd0b5246e"
+}

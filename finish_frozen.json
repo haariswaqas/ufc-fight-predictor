@@ -1,0 +1,57 @@
+{
+ "frozen_on": "2026-11-11",
+ "primary_model": "blend: mean of the logistic and boosting outcome probabilities",
+ "logit": {
+  "kind": "logit",
+  "start": 2013,
+  "c": 0.003,
+  "year": true
+ },
+ "gbm": {
+  "kind": "gbm",
+  "start": 2010,
+  "rounds": 100,
+  "year": true,
+  "params": {
+   "num_leaves": 8,
+   "max_depth": -1,
+   "learning_rate": 0.04,
+   "min_child_samples": 150,
+   "feature_fraction": 0.6,
+   "lambda_l2": 5.0,
+   "min_split_gain": 0.01
+  }
+ },
+ "gbm_seeds": [
+  0,
+  1,
+  2
+ ],
+ "base_rates": {
+  "start": 2010,
+  "by": [
+   "five",
+   "female",
+   "heavy_grp"
+  ]
+ },
+ "winner_probabilities": "frozen winner model (config_frozen.json, B average), refitted on fights before the test",
+ "test_window": [
+  "2025-01-01",
+  "2026-10-10"
+ ],
+ "pass_rule": {
+  "1": "method and round given the winner: log loss lower than base rates, 95% event-bootstrap interval of the difference below zero (all decided 3- and 5-round fights)",
+  "2": "knockout / submission / decision with the winner model: log loss lower than base rates, interval below zero (fights with usable opening odds)",
+  "3": "exact outcome (winner, method, round) with the winner model: log loss lower than base rates with the same winner probabilities, interval below zero",
+  "note": "the comparison with bookmakers' method odds is reported but is not part of the pass rule"
+ },
+ "fighter_prefight_sha256": "a717aed1081ccbd7caad910114ae4557f42d8cde4de307463c458c5f0237dab0",
+ "validation_scores": {
+  "logit": 1.4663173268177807,
+  "gbm": 1.4654447151312238,
+  "blend": 1.4609162218825715,
+  "base": 1.547155199327927,
+  "base_format_only": 1.5393950747905263
+ }
+}
