@@ -23,7 +23,7 @@ from ufc.metrics import log_loss  # noqa: E402
 from ufc.paper import (LEDGER, LEDGER_COLS, UPCOMING, UPCOMING_COLS, append_ledger, fit_finish_history,  # noqa: E402
                        fit_history, load_finish_frozen, load_frozen, load_ledger, score_full, settle)
 
-st.set_page_config(page_title="UFC model: paper trading", layout="wide")
+st.set_page_config(page_title="UFC fight predictor", layout="centered")
 
 CLASSES = ["Strawweight", "Flyweight", "Bantamweight", "Featherweight", "Lightweight", "Welterweight",
            "Middleweight", "Light Heavyweight", "Heavyweight"]
@@ -95,8 +95,9 @@ def to_decimal(v, american):
 
 
 def blank_card():
-    return pd.DataFrame({"fighter_1": [""] * 6, "fighter_2": [""] * 6, "bout_type": ["Lightweight Bout"] * 6,
-                         "rounds": [3] * 6, "f1_odds": [np.nan] * 6, "f2_odds": [np.nan] * 6})
+    return pd.DataFrame({"fighter_1": pd.Series(dtype="object"), "fighter_2": pd.Series(dtype="object"),
+                         "bout_type": pd.Series(dtype="object"), "rounds": pd.Series(dtype="int64"),
+                         "f1_odds": pd.Series(dtype="float64"), "f2_odds": pd.Series(dtype="float64")})
 
 
 def card_from_file():
@@ -116,7 +117,7 @@ fighters, last_data_date = known_fighters(data_stamp())
 frozen = load_frozen()
 rule = frozen["betting_rule"]
 
-st.title("UFC model: paper trading")
+st.title("UFC fight predictor")
 st.caption(f"Frozen model. Fight history through {last_data_date:%d %B %Y}. "
            f"A fight is a paper bet when the edge is above {rule['edge_threshold']:.0%} and not above "
            f"{rule['edge_cap']:.0%}. No money is staked.")
@@ -131,26 +132,72 @@ with tab_score:
         st.session_state.event_date = loaded["date"] if loaded else date.today()
         st.session_state.event_name = loaded["event"] if loaded else ""
         st.session_state.bookmaker = loaded["bookmaker"] if loaded else ""
+        st.session_state.card_v = 0
 
-    c1, c2, c3, c4 = st.columns([1, 2, 2, 1.4])
-    event_date = c1.date_input("Fight date", st.session_state.event_date)
-    event_name = c2.text_input("Event", st.session_state.event_name)
-    bookmaker = c3.text_input("Where the odds are from", st.session_state.bookmaker)
-    fmt = c4.radio("Odds format", ["Decimal", "American"], horizontal=True)
+    def replace_card(new_card):
+        """Swap the card and reset the table editor so it shows the new rows."""
+        st.session_state.card = new_card.reset_index(drop=True)
+        st.session_state.card_v += 1
+        st.rerun()
+
+    with st.expander("Event details", expanded=not st.session_state.event_name):
+        c1, c2 = st.columns(2)
+        event_date = c1.date_input("Fight date", st.session_state.event_date)
+        event_name = c2.text_input("Event", st.session_state.event_name)
+        c3, c4 = st.columns(2)
+        bookmaker = c3.text_input("Where the odds are from", st.session_state.bookmaker)
+        fmt = c4.radio("Odds format", ["Decimal", "American"], horizontal=True)
     american = fmt == "American"
 
-    st.write("Enter one fight per row. Use the odds you can get right now, and enter them as early as you can.")
-    card = st.data_editor(
-        st.session_state.card, num_rows="dynamic", width="stretch", key="card_editor",
-        column_config={
-            "fighter_1": st.column_config.TextColumn("Fighter 1", required=True),
-            "fighter_2": st.column_config.TextColumn("Fighter 2", required=True),
-            "bout_type": st.column_config.SelectboxColumn("Bout", options=BOUT_TYPES, required=True),
-            "rounds": st.column_config.SelectboxColumn("Rounds", options=[3, 5], required=True),
-            "f1_odds": st.column_config.NumberColumn("Fighter 1 odds", format="%.2f"),
-            "f2_odds": st.column_config.NumberColumn("Fighter 2 odds", format="%.2f"),
-        })
+    # ---- add a fight: a form works better than a table on a phone
+    with st.expander("Add a fight", expanded=len(st.session_state.card) == 0):
+        with st.form("add_fight", clear_on_submit=True):
+            names = list(fighters.index)
+            a, b = st.columns(2)
+            n1 = a.selectbox("Fighter 1", names, index=None, placeholder="Type a name", accept_new_options=True)
+            n2 = b.selectbox("Fighter 2", names, index=None, placeholder="Type a name", accept_new_options=True)
+            a, b = st.columns(2)
+            bout = a.selectbox("Bout", BOUT_TYPES, index=BOUT_TYPES.index("Lightweight Bout"))
+            n_rounds = b.radio("Rounds", [3, 5], horizontal=True)
+            a, b = st.columns(2)
+            o1 = a.number_input("Fighter 1 odds", value=None, format="%.2f")
+            o2 = b.number_input("Fighter 2 odds", value=None, format="%.2f")
+            st.caption("Use the odds you can get right now. Leave both blank if there are none yet. "
+                       "A name not in the list is treated as a UFC debutant.")
+            if st.form_submit_button("Add to card", type="primary"):
+                if not n1 or not n2:
+                    st.error("Choose both fighters.")
+                else:
+                    st.session_state.pending_add = {"fighter_1": n1, "fighter_2": n2, "bout_type": bout,
+                                                    "rounds": n_rounds, "f1_odds": o1, "f2_odds": o2}
+
+    with st.expander("Edit the card as a table"):
+        card = st.data_editor(
+            st.session_state.card, num_rows="dynamic", width="stretch", key=f"card_editor_{st.session_state.card_v}",
+            column_config={
+                "fighter_1": st.column_config.TextColumn("Fighter 1", required=True),
+                "fighter_2": st.column_config.TextColumn("Fighter 2", required=True),
+                "bout_type": st.column_config.SelectboxColumn("Bout", options=BOUT_TYPES, required=True),
+                "rounds": st.column_config.SelectboxColumn("Rounds", options=[3, 5], required=True),
+                "f1_odds": st.column_config.NumberColumn("Fighter 1 odds", format="%.2f"),
+                "f2_odds": st.column_config.NumberColumn("Fighter 2 odds", format="%.2f"),
+            })
     card = card[(card.fighter_1.fillna("").str.strip() != "") & (card.fighter_2.fillna("").str.strip() != "")]
+    card = card.reset_index(drop=True)
+    if st.session_state.get("pending_add"):
+        row = st.session_state.pop("pending_add")
+        replace_card(pd.concat([card, pd.DataFrame([row])], ignore_index=True))
+
+    st.subheader(f"Card: {len(card)} fight{'' if len(card) == 1 else 's'}")
+    for i, r in card.iterrows():
+        with st.container(border=True):
+            left, right = st.columns([5, 1], vertical_alignment="center")
+            priced = pd.notna(r.f1_odds) and pd.notna(r.f2_odds)
+            left.markdown(f"**{r.fighter_1}** vs **{r.fighter_2}**  \n"
+                          f"{r.bout_type} · {int(r.rounds) if pd.notna(r.rounds) else 3} rounds · "
+                          + (f"odds {r.f1_odds:.2f} / {r.f2_odds:.2f}" if priced else "no odds yet"))
+            if right.button("Remove", key=f"rm_{st.session_state.card_v}_{i}", width="stretch"):
+                replace_card(card.drop(i))
 
     # ---- name check: no model needed
     idents = {ident(n): n for n in fighters.index}
@@ -162,12 +209,6 @@ with tab_score:
                             + (f" Did you mean: {', '.join(near)}?" if near else ""))
     if problems:
         st.warning("\n\n".join(problems))
-    with st.expander("Look up how a fighter's name is spelled in the data"):
-        q = st.text_input("Type part of a name", key="lookup")
-        if q:
-            hits = fighters[fighters.index.str.contains(q, case=False, regex=False)].copy()
-            hits["last_fight"] = hits.last_fight.dt.date
-            st.dataframe(hits.head(30), width="stretch")
 
     errors = []
     if len(card) == 0:
@@ -187,7 +228,7 @@ with tab_score:
     for e in errors:
         st.error(e)
 
-    if st.button("Score this card", type="primary", disabled=bool(errors)):
+    if st.button("Score this card", type="primary", disabled=bool(errors), width="stretch"):
         up = pd.DataFrame({
             "date": pd.Timestamp(event_date).strftime("%Y-%m-%d"), "event": event_name.strip() or "Unnamed event",
             "fighter_1": card.fighter_1.str.strip().map(lambda n: idents.get(ident(n), n)).values,
@@ -210,116 +251,90 @@ with tab_score:
     res = st.session_state.get("result")
     if res is not None:
         scored = res[res.model_p_f1.notna()].copy()
+        fin = st.session_state.get("finish")
         st.subheader("Predictions")
         if scored.empty:
             st.info("No fight has odds yet, so nothing was scored.")
         else:
-            f1_fav = scored.model_p_f1 >= 0.5
-            view = pd.DataFrame({
-                "Fight": scored.fighter_1 + " vs " + scored.fighter_2,
-                "Model's pick to win": np.where(f1_fav, scored.fighter_1, scored.fighter_2),
-                "Model": np.where(f1_fav, scored.model_p_f1, 1 - scored.model_p_f1) * 100,
-                "Odds imply": np.where(f1_fav, scored.market_p_f1, 1 - scored.market_p_f1) * 100,
-                "Best-value side": scored.pick, "Price": scored.pick_price, "Edge": scored.edge * 100,
-                "Paper bet": np.where(scored.bet, "Yes", "")})
-            st.dataframe(view, width="stretch", hide_index=True, column_config={
-                "Model": st.column_config.NumberColumn(format="%.1f%%"),
-                "Odds imply": st.column_config.NumberColumn(format="%.1f%%", help="Bookmaker margin removed"),
-                "Price": st.column_config.NumberColumn(format="%.2f"),
-                "Edge": st.column_config.NumberColumn(format="%+.1f%%", help="Model probability x price - 1"),
-            })
             bets = scored[scored.bet]
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Fights scored", len(scored))
-            m2.metric("Paper bets", len(bets))
-            m3.metric("Average edge on bets", f"{bets.edge.mean():+.1%}" if len(bets) else "none")
-        fin = st.session_state.get("finish")
+            st.caption(f"{len(scored)} fight{'' if len(scored) == 1 else 's'} scored · {len(bets)} paper "
+                       f"bet{'' if len(bets) == 1 else 's'}"
+                       + (f" · average edge on bets {bets.edge.mean():+.1%}" if len(bets) else ""))
+        pct = st.column_config.NumberColumn(format="%.1f%%")
+        for i, r in scored.iterrows():
+            f1, f2, p1 = r.fighter_1, r.fighter_2, float(r.model_p_f1)
+            with st.container(border=True):
+                st.markdown(f"**{f1} vs {f2}**" + ("  :green-badge[Paper bet]" if r.bet else ""))
+                fav, p_fav = (f1, p1) if p1 >= 0.5 else (f2, 1 - p1)
+                st.progress(p1, text=f"{f1} {p1:.0%} · {f2} {1 - p1:.0%}")
+                st.markdown(f"Pick to win: **{fav}** ({p_fav:.1%}; the odds imply "
+                            f"{r.market_p_f1 if fav == f1 else 1 - r.market_p_f1:.1%})  \n"
+                            f"Best value: **{r.pick}** at {r.pick_price:.2f}, edge {r.edge:+.1%}")
+                if fin is None:
+                    continue
+                row = fin.loc[i] * 100
+                val = lambda **kw: float(row[outcome_cols(**kw)].sum())
+                top = row.idxmax()
+                st.markdown(f"Knockout {val(method='ko'):.0f}% · Submission {val(method='sub'):.0f}% · "
+                            f"Decision {val(method='dec'):.0f}%  \n"
+                            f"Most likely result: **{outcome_text(top, f1, f2)}** ({row[top]:.0f}%)")
+                with st.expander("How and when"):
+                    s1, s2 = f1.split()[-1], f2.split()[-1]
+                    if s1 == s2:
+                        s1, s2 = f1, f2
+                    rounds = list(range(1, int(st.session_state.rounds[i]) + 1))
+                    t_build, t_method, t_round, t_exact = st.tabs(["Build a prediction", "By method", "By round",
+                                                                    "Exact results"])
+                    with t_build:
+                        who = st.selectbox("Winner", ["Either", f1, f2], key=f"who_{i}")
+                        how = st.selectbox("Method", ["Any", "Knockout", "Submission", "Decision"], key=f"how_{i}")
+                        when = st.selectbox("Round", ["Any"] + [str(x) for x in rounds], key=f"when_{i}", disabled=how == "Decision")
+                        side = {f1: "f1", f2: "f2"}.get(who)
+                        method = {"Knockout": "ko", "Submission": "sub", "Decision": "dec"}.get(how)
+                        rnd = None if when == "Any" or how == "Decision" else int(when)
+                        p = val(side=side, method=method, rnd=rnd) / 100
+                        said = (f"{who} wins" if side else "The fight ends") + (f" by {how.lower()}" if method else "") \
+                            + (f" in round {rnd}" if rnd else "")
+                        if rnd and not method:
+                            said += " (by knockout or submission)"
+                        st.metric(said, f"{p:.1%}")
+                        st.caption(f"Fair decimal price: {fair_price(p)} (the price at which this bet breaks even)")
+                    with t_method:
+                        st.dataframe(pd.DataFrame({
+                            "": ["Knockout", "Submission", "Decision", "Total"],
+                            s1: [val(side="f1", method=m) for m in METHODS] + [val(side="f1")],
+                            s2: [val(side="f2", method=m) for m in METHODS] + [val(side="f2")],
+                            "Either": [val(method=m) for m in METHODS] + [100.0]}), hide_index=True, width="stretch",
+                            column_config={c: pct for c in (s1, s2, "Either")})
+                    with t_round:
+                        st.dataframe(pd.DataFrame({
+                            "Round": [str(x) for x in rounds] + ["Distance"],
+                            "Knockout": [val(method="ko", rnd=x) for x in rounds] + [None],
+                            "Submission": [val(method="sub", rnd=x) for x in rounds] + [None],
+                            "Ends here": [val(rnd=x) for x in rounds] + [val(method="dec")]}),
+                            hide_index=True, width="stretch",
+                            column_config={c: pct for c in ("Knockout", "Submission", "Ends here")})
+                        st.caption("Either fighter. Use Build a prediction for one fighter in one round.")
+                    with t_exact:
+                        best = row.sort_values(ascending=False).head(6)
+                        for c, v in best.items():
+                            st.markdown(f"**{v:.1f}%** · {outcome_text(c, f1, f2)} · fair price {fair_price(v / 100)}")
         if fin is not None and len(scored):
-            st.subheader("How and when each fight ends")
-            st.caption("Knockout includes technical knockouts and doctor stoppages. These probabilities beat simple "
-                       "base rates on fights the model had never seen, but they have not been shown to beat "
+            st.caption("Knockout includes technical knockouts and doctor stoppages. The method and round numbers beat "
+                       "simple base rates on fights the model had never seen, but they have not been shown to beat "
                        "bookmakers' method or round prices, so no paper bets are made on them.")
-            P = fin.loc[scored.index] * 100
-            names = {i: (scored.fighter_1[i], scored.fighter_2[i]) for i in scored.index}
-            finish_cols = [c for c in P.columns if not c.endswith("_dec")]
-            top, top_fin = P.idxmax(axis=1), P[finish_cols].idxmax(axis=1)
-            summary = pd.DataFrame({
-                "Fight": scored.fighter_1 + " vs " + scored.fighter_2,
-                "Knockout": P[outcome_cols(method="ko")].sum(axis=1),
-                "Submission": P[outcome_cols(method="sub")].sum(axis=1),
-                "Decision": P[outcome_cols(method="dec")].sum(axis=1),
-                "Most likely result": [outcome_text(top[i], *names[i]) for i in P.index],
-                "Chance": [P.loc[i, top[i]] for i in P.index],
-                "Most likely finish": [outcome_text(top_fin[i], *names[i]) for i in P.index],
-                "Chance ": [P.loc[i, top_fin[i]] for i in P.index]})
-            pct = st.column_config.NumberColumn(format="%.1f%%")
-            st.dataframe(summary, width="stretch", hide_index=True, column_config={
-                c: pct for c in ("Knockout", "Submission", "Decision", "Chance", "Chance ")})
-
-            labels = {i: f"{a} vs {b}" for i, (a, b) in names.items()}
-            pick = st.selectbox("Fight in detail", list(labels), format_func=labels.get, key="finish_fight")
-            if pick not in P.index:
-                pick = P.index[0]
-            f1, f2 = names[pick]
-            row = P.loc[pick]
-            n_rounds = int(st.session_state.rounds[pick])
-            val = lambda **kw: float(row[outcome_cols(**kw)].sum())
-            left, right = st.columns(2)
-            with left:
-                st.write("**By method**")
-                st.dataframe(pd.DataFrame({
-                    "": ["Knockout", "Submission", "Decision", "Total"],
-                    f1: [val(side="f1", method=m) for m in METHODS] + [val(side="f1")],
-                    f2: [val(side="f2", method=m) for m in METHODS] + [val(side="f2")],
-                    "Either": [val(method=m) for m in METHODS] + [100.0]}), hide_index=True, width="stretch",
-                    column_config={c: pct for c in (f1, f2, "Either")})
-                st.write("**Most likely exact results**")
-                best = row.sort_values(ascending=False).head(6)
-                st.dataframe(pd.DataFrame({"Result": [outcome_text(c, f1, f2) for c in best.index],
-                                           "Chance": best.values,
-                                           "Fair price": [fair_price(v / 100) for v in best.values]}),
-                             hide_index=True, width="stretch", column_config={"Chance": pct})
-            with right:
-                st.write("**By round**")
-                rounds = list(range(1, n_rounds + 1))
-                ends = [val(rnd=r) for r in rounds]
-                st.dataframe(pd.DataFrame({
-                    "Round": [str(r) for r in rounds] + ["Goes the distance"],
-                    f"{f1} knockout": [val(side="f1", method="ko", rnd=r) for r in rounds] + [None],
-                    f"{f1} submission": [val(side="f1", method="sub", rnd=r) for r in rounds] + [None],
-                    f"{f2} knockout": [val(side="f2", method="ko", rnd=r) for r in rounds] + [None],
-                    f"{f2} submission": [val(side="f2", method="sub", rnd=r) for r in rounds] + [None],
-                    "Fight ends here": ends + [val(method="dec")]}), hide_index=True, width="stretch",
-                    column_config={c: pct for c in (f"{f1} knockout", f"{f1} submission", f"{f2} knockout",
-                                                    f"{f2} submission", "Fight ends here")})
-                st.write("**Build a prediction**")
-                b1, b2, b3 = st.columns(3)
-                who = b1.selectbox("Winner", ["Either", f1, f2], key="combo_who")
-                how = b2.selectbox("Method", ["Any", "Knockout", "Submission", "Decision"], key="combo_how")
-                when = b3.selectbox("Round", ["Any"] + rounds, key="combo_when", disabled=how == "Decision")
-                side = {f1: "f1", f2: "f2"}.get(who)
-                method = {"Knockout": "ko", "Submission": "sub", "Decision": "dec"}.get(how)
-                rnd = None if when == "Any" or how == "Decision" else int(when)
-                p = val(side=side, method=method, rnd=rnd) / 100
-                said = (f"{who} wins" if side else "The fight ends") + (f" by {how.lower()}" if method else "") \
-                    + (f" in round {rnd}" if rnd else "")
-                if rnd and not method:
-                    said += " (by knockout or submission)"
-                st.metric(said, f"{p:.1%}", help="Fair price is 1 divided by the probability.")
-                st.caption(f"Fair decimal price: {fair_price(p)}")
-
         notes = res[res.notes.fillna("") != ""]
         if len(notes):
             st.write("**Notes**")
             for r in notes.itertuples():
                 st.write(f"- {r.fighter_1} vs {r.fighter_2}: {r.notes}")
         if len(scored):
-            st.write("Logging is permanent for the price: the first logged price for a fight stands.")
-            if st.button("Log these fights to the ledger"):
+            if st.button("Log these fights to the ledger", width="stretch"):
                 added, skipped = append_ledger(res, datetime.now().strftime("%Y-%m-%d %H:%M"))
                 st.session_state.logged_msg = (f"Logged {added} fight(s)."
                                                + (f" {skipped} were already in the ledger and left unchanged."
                                                   if skipped else ""))
+            st.caption("Logging is permanent for the price: the first logged price for a fight stands.")
             if st.session_state.get("logged_msg"):
                 st.success(st.session_state.logged_msg)
 
@@ -329,45 +344,68 @@ with tab_ledger:
     if led.empty:
         st.info("The ledger is empty. Score a card and log it first.")
     else:
-        st.write("After a card, fill in the closing odds (decimal) and the winner for each fight, then save. "
-                 "Type the winner's name exactly as shown, or `draw`, or `nc`.")
-        only_open = st.toggle("Show only fights without a result", value=False)
-        show = led[led.winner.isna()] if only_open else led
-        show = show.copy()
-        show["bet"] = show.bet.astype(str).str.lower().isin(["true", "1"])
-        show["winner"] = show.winner.astype("object")
-        fixed = [c for c in LEDGER_COLS if c not in ("close_f1_decimal", "close_f2_decimal", "winner")]
-        edited = st.data_editor(
-            show, width="stretch", hide_index=True, disabled=fixed, key="ledger_editor",
-            column_order=["date", "fighter_1", "fighter_2", "f1_decimal", "f2_decimal", "model_p_f1", "pick",
-                          "pick_price", "edge", "bet", "close_f1_decimal", "close_f2_decimal", "winner",
-                          "bookmaker", "notes", "logged_at"],
-            column_config={
-                "f1_decimal": st.column_config.NumberColumn("F1 price", format="%.2f"),
-                "f2_decimal": st.column_config.NumberColumn("F2 price", format="%.2f"),
-                "model_p_f1": st.column_config.NumberColumn("Model P(F1)", format="%.3f"),
-                "pick_price": st.column_config.NumberColumn("Pick price", format="%.2f"),
-                "edge": st.column_config.NumberColumn("Edge", format="%.3f"),
-                "bet": st.column_config.CheckboxColumn("Paper bet"),
-                "close_f1_decimal": st.column_config.NumberColumn("F1 closing price", format="%.2f", min_value=1.01),
-                "close_f2_decimal": st.column_config.NumberColumn("F2 closing price", format="%.2f", min_value=1.01),
-                "winner": st.column_config.TextColumn("Winner"),
-            })
-        bad = []
-        for r in edited.itertuples():
-            w = str(r.winner).strip() if pd.notna(r.winner) else ""
-            if w and w not in (r.fighter_1, r.fighter_2) and w.lower() not in ("draw", "nc", "no contest", "void"):
-                bad.append(f"{r.fighter_1} vs {r.fighter_2}: winner `{w}` is not one of the two fighters, `draw` or `nc`.")
-        for b in bad:
-            st.error(b)
-        if st.button("Save results", type="primary", disabled=bool(bad)):
-            out = led.copy()
-            out["winner"] = out.winner.astype("object")
-            for c in ("close_f1_decimal", "close_f2_decimal", "winner"):
-                out.loc[edited.index, c] = edited[c]
-            out[LEDGER_COLS].to_csv(LEDGER, index=False)
-            st.success("Saved.")
-            st.rerun()
+        is_bet = led.bet.astype(str).str.lower().isin(["true", "1"])
+        waiting = led[led.winner.isna()]
+        st.caption(f"{len(led)} fights logged · {int(is_bet.sum())} paper bets · {len(waiting)} waiting for a result")
+        if len(waiting):
+            st.subheader("Enter a result")
+            label = lambda i: f"{led.fighter_1[i]} vs {led.fighter_2[i]} ({led.date[i]})"
+            i = st.selectbox("Fight", list(waiting.index), format_func=label, key="settle_fight")
+            r = led.loc[i]
+            with st.form(f"settle_{i}"):
+                if is_bet[i]:
+                    st.markdown(f":green-badge[Paper bet] {r.pick} at {r.pick_price:.2f}")
+                winner = st.radio("Winner", [r.fighter_1, r.fighter_2, "draw", "nc"], horizontal=True)
+                a, b = st.columns(2)
+                c1v = a.number_input(f"Closing price: {r.fighter_1}", value=None, min_value=1.01, format="%.2f")
+                c2v = b.number_input(f"Closing price: {r.fighter_2}", value=None, min_value=1.01, format="%.2f")
+                st.caption("Closing prices are decimal and optional, but closing-line value needs them.")
+                if st.form_submit_button("Save result", type="primary"):
+                    out = led.copy()
+                    out["winner"] = out.winner.astype("object")
+                    out.loc[i, "winner"] = winner
+                    out.loc[i, "close_f1_decimal"], out.loc[i, "close_f2_decimal"] = c1v, c2v
+                    out[LEDGER_COLS].to_csv(LEDGER, index=False)
+                    st.rerun()
+        with st.expander("Full ledger as a table (edit closing prices and winners)"):
+            st.write("Type the winner's name exactly as shown, or `draw`, or `nc`.")
+            only_open = st.toggle("Show only fights without a result", value=False)
+            show = led[led.winner.isna()] if only_open else led
+            show = show.copy()
+            show["bet"] = show.bet.astype(str).str.lower().isin(["true", "1"])
+            show["winner"] = show.winner.astype("object")
+            fixed = [c for c in LEDGER_COLS if c not in ("close_f1_decimal", "close_f2_decimal", "winner")]
+            edited = st.data_editor(
+                show, width="stretch", hide_index=True, disabled=fixed, key="ledger_editor",
+                column_order=["date", "fighter_1", "fighter_2", "f1_decimal", "f2_decimal", "model_p_f1", "pick",
+                              "pick_price", "edge", "bet", "close_f1_decimal", "close_f2_decimal", "winner",
+                              "bookmaker", "notes", "logged_at"],
+                column_config={
+                    "f1_decimal": st.column_config.NumberColumn("F1 price", format="%.2f"),
+                    "f2_decimal": st.column_config.NumberColumn("F2 price", format="%.2f"),
+                    "model_p_f1": st.column_config.NumberColumn("Model P(F1)", format="%.3f"),
+                    "pick_price": st.column_config.NumberColumn("Pick price", format="%.2f"),
+                    "edge": st.column_config.NumberColumn("Edge", format="%.3f"),
+                    "bet": st.column_config.CheckboxColumn("Paper bet"),
+                    "close_f1_decimal": st.column_config.NumberColumn("F1 closing price", format="%.2f", min_value=1.01),
+                    "close_f2_decimal": st.column_config.NumberColumn("F2 closing price", format="%.2f", min_value=1.01),
+                    "winner": st.column_config.TextColumn("Winner"),
+                })
+            bad = []
+            for r in edited.itertuples():
+                w = str(r.winner).strip() if pd.notna(r.winner) else ""
+                if w and w not in (r.fighter_1, r.fighter_2) and w.lower() not in ("draw", "nc", "no contest", "void"):
+                    bad.append(f"{r.fighter_1} vs {r.fighter_2}: winner `{w}` is not one of the two fighters, `draw` or `nc`.")
+            for b in bad:
+                st.error(b)
+            if st.button("Save table", disabled=bool(bad)):
+                out = led.copy()
+                out["winner"] = out.winner.astype("object")
+                for c in ("close_f1_decimal", "close_f2_decimal", "winner"):
+                    out.loc[edited.index, c] = edited[c]
+                out[LEDGER_COLS].to_csv(LEDGER, index=False)
+                st.success("Saved.")
+                st.rerun()
 
 # ================================================================ results
 with tab_results:
@@ -378,7 +416,7 @@ with tab_results:
     else:
         bets = done[done.is_bet].sort_values(["date", "logged_at"]).reset_index(drop=True)
         decided = done[done.decided]
-        k1, k2, k3, k4 = st.columns(4)
+        (k1, k2), (k3, k4) = st.columns(2), st.columns(2)
         k1.metric("Settled paper bets", len(bets), help=f"{int(led.bet.astype(str).str.lower().isin(['true', '1']).sum())} logged in total")
         if len(bets):
             k2.metric("Return per unit staked", f"{bets.bet_profit.mean():+.1%}")
